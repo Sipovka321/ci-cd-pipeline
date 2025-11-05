@@ -44,10 +44,11 @@ jobs:
         fi
         
         echo "✅ All tests passed!"
-        
-      finally:
-        # Останавливаем и удаляем контейнер
-        echo "Cleaning up..."
+
+    - name: Cleanup containers
+      if: always()
+      run: |
+        echo "Cleaning up containers..."
         docker stop nginx-test || true
         docker rm nginx-test || true
 
