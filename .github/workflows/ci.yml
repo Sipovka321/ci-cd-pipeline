@@ -1,0 +1,66 @@
+name: CI Pipeline
+
+on:
+  push:
+    paths:
+      - 'index.html'
+  pull_request:
+
+jobs:
+  test-nginx:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+      
+    - name: Test Nginx container
+      run: |
+        # Запускаем nginx контейнер
+        docker run -d --name nginx-test -p 9889:80 -v $(pwd):/usr/share/nginx/html nginx:alpine
+        echo "Waiting for nginx to start..."
+        sleep 5
+        
+        # Проверяем HTTP response code
+        echo "Testing HTTP response..."
+        response_code=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:9889)
+        echo "HTTP Response Code: $response_code"
+        
+        if [ "$response_code" != "200" ]; then
+          echo "❌ ERROR: Expected HTTP 200, got $response_code"
+          exit 1
+        fi
+        
+        # Сравниваем MD5 sums
+        echo "Comparing MD5 checksums..."
+        local_md5=$(md5sum index.html | awk '{print $1}')
+        remote_md5=$(curl -s http://localhost:9889 | md5sum | awk '{print $1}')
+        echo "Local MD5: $local_md5"
+        echo "Remote MD5: $remote_md5"
+        
+        if [ "$local_md5" != "$remote_md5" ]; then
+          echo "❌ ERROR: MD5 sums don't match!"
+          exit 1
+        fi
+        
+        echo "✅ All tests passed!"
+        
+      finally:
+        # Останавливаем и удаляем контейнер
+        echo "Cleaning up..."
+        docker stop nginx-test || true
+        docker rm nginx-test || true
+
+    - name: Notify Telegram on success
+      if: success()
+      run: |
+        curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+          -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+          -d text="✅ CI Pipeline Success!%0A%0A📦 Repo: ${{ github.repository }}%0A🔗 Commit: ${{ github.sha }}%0A🌐 By: ${{ github.actor }}"
+
+    - name: Notify Telegram on failure
+      if: failure()
+      run: |
+        curl -s -X POST "https://api.telegram.org/bot${{ secrets.TELEGRAM_BOT_TOKEN }}/sendMessage" \
+          -d chat_id="${{ secrets.TELEGRAM_CHAT_ID }}" \
+          -d text="❌ CI Pipeline Failed!%0A%0A📦 Repo: ${{ github.repository }}%0A🔗 Commit: ${{ github.sha }}%0A👤 By: ${{ github.actor }}%0A%0A📋 Check logs: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
